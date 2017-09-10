@@ -1,12 +1,21 @@
 [package]
 authors = ["Walfie <walfington@gmail.com>"]
+build = "build.rs"
 name = "petronel-gbfrf"
 version = "0.1.0"
-build = "build.rs"
+
+[build-dependencies]
 
 [build-dependencies.prost-build]
 git = "https://github.com/danburkert/prost"
 rev = "81064115e77f12185df6ea2b303c85727cd4eebb"
+
+[dependencies]
+bytes = "0.4.5"
+futures = "0.1.15"
+tk-http = "0.3.1"
+tk-listen = "0.1.0"
+tokio-core = "0.1.9"
 
 [dependencies.prost]
 git = "https://github.com/danburkert/prost"
@@ -19,6 +28,3 @@ rev = "81064115e77f12185df6ea2b303c85727cd4eebb"
 [dependencies.prost-types]
 git = "https://github.com/danburkert/prost"
 rev = "81064115e77f12185df6ea2b303c85727cd4eebb"
-
-[dependencies]
-bytes = "0.4.5"

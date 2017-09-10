@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package walfie.gbf.raidfinder.protocol;
+
+import "domain.proto";
+
+message ResponseMessage {
+  oneof data {
+    WelcomeResponse welcomeMessage = 1;
+    FollowStatusResponse followStatusMessage = 2;
+    RaidTweetResponse raidTweetMessage = 3;
+    RaidBossesResponse raidBossesMessage = 4;
+    KeepAliveResponse keepAliveMessage = 5;
+  };
+};
+
+message WelcomeResponse {
+  string serverVersion = 1;
+};
+
+message FollowStatusResponse {
+  repeated string FollowedBossNames = 1;
+};
+
+message RaidTweetResponse {
+  string bossName = 1;
+  string raidId = 2;
+  string screenName = 3;
+  int64 tweetId = 4;
+  string profileImage = 5;
+  string text = 6;
+  int64 createdAt = 7;
+  Language language = 8;
+};
+
+message RaidBossesResponse {
+  repeated RaidBoss raidBosses = 1;
+};
+
+message KeepAliveResponse {
+};
+

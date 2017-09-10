@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package walfie.gbf.raidfinder.protocol;
+
+message RequestMessage {
+  oneof data {
+    AllRaidBossesRequest allRaidBossesMessage = 1;
+    RaidBossesRequest raidBossesMessage = 2;
+    FollowRequest followMessage = 3;
+    UnfollowRequest unfollowMessage = 4;
+  };
+};
+
+message AllRaidBossesRequest {
+};
+
+message RaidBossesRequest {
+  repeated string bossNames = 1;
+};
+
+message FollowRequest {
+  repeated string bossNames = 1;
+};
+
+message UnfollowRequest {
+  repeated string bossNames = 1;
+};

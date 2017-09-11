@@ -73,8 +73,6 @@ fn main() {
                                 );
                             };
 
-                            println!("Parsed: {:?}", parsed);
-
                             let profile_image = {
                                 "https://avatars0.githubusercontent.com/u/11370525?v=4&s=64"
                             }.into();

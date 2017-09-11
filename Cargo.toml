@@ -5,10 +5,7 @@ name = "petronel-gbfrf"
 version = "0.1.0"
 
 [build-dependencies]
-
-[build-dependencies.prost-build]
-git = "https://github.com/danburkert/prost"
-rev = "81064115e77f12185df6ea2b303c85727cd4eebb"
+prost-build = "0.2.0"
 
 [dependencies]
 bytes = "0.4.5"
@@ -16,15 +13,7 @@ futures = "0.1.15"
 tk-http = "0.3.1"
 tk-listen = "0.1.0"
 tokio-core = "0.1.9"
+prost = "0.2.0"
+prost-derive = "0.2.0"
+prost-types = "0.2.0"
 
-[dependencies.prost]
-git = "https://github.com/danburkert/prost"
-rev = "81064115e77f12185df6ea2b303c85727cd4eebb"
-
-[dependencies.prost-derive]
-git = "https://github.com/danburkert/prost"
-rev = "81064115e77f12185df6ea2b303c85727cd4eebb"
-
-[dependencies.prost-types]
-git = "https://github.com/danburkert/prost"
-rev = "81064115e77f12185df6ea2b303c85727cd4eebb"

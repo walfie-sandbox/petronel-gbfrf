@@ -8,6 +8,7 @@ dependencies = [
  "prost-build 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "prost-derive 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "prost-types 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tk-bufstream 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tk-http 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "tk-listen 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-core 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -1,13 +1,16 @@
 #[macro_use]
 extern crate prost_derive;
 
+extern crate bytes;
 extern crate prost;
+extern crate tk_bufstream;
 extern crate tk_listen;
 extern crate tk_http;
 extern crate tokio_core;
 extern crate futures;
 
 mod protobuf;
+mod codec;
 
 use futures::{Future, Stream};
 use futures::future::{self, FutureResult};

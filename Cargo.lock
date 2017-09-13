@@ -2,6 +2,7 @@
 name = "petronel-gbfrf"
 version = "0.1.0"
 dependencies = [
+ "byteorder 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "prost 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",

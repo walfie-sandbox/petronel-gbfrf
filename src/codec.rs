@@ -1,22 +1,50 @@
+use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
+use futures::{Async, Future};
 use std::marker::PhantomData;
 use tk_bufstream::{Buf, Decode, Encode};
-use tk_http::server::{Codec, Dispatcher, Error as TkError, Head};
+use tk_bufstream::{ReadBuf, WriteBuf};
+use tk_http::server::{Codec, Dispatcher, Encoder, EncoderDone, Error as TkError, Head, RecvMode};
 
 const MAX_REQUEST_LENGTH: usize = 128_000; // Not expecting huge requests here
 
 pub struct RequestDispatcher {}
 
 impl<S> Dispatcher<S> for RequestDispatcher {
-    type Codec = Box<Codec<S>>; // TODO
+    type Codec = RequestCodec;
 
     fn headers_received(&mut self, headers: &Head) -> Result<Self::Codec, TkError> {
         unimplemented!()
     }
 }
 
-pub struct RequestCodec<B> {
-    
+pub struct RequestCodec {
+    is_websocket: bool,
+}
+
+impl<S> Codec<S> for RequestCodec {
+    type ResponseFuture = Box<Future<Item = EncoderDone<S>, Error = TkError>>;
+
+    fn recv_mode(&mut self) -> RecvMode {
+        if self.is_websocket {
+            RecvMode::hijack()
+        } else {
+            RecvMode::buffered_upfront(MAX_REQUEST_LENGTH)
+        }
+    }
+
+    fn data_received(&mut self, data: &[u8], end: bool) -> Result<Async<usize>, TkError> {
+        unimplemented!()
+    }
+
+    fn start_response(&mut self, e: Encoder<S>) -> Self::ResponseFuture {
+        unimplemented!()
+    }
+
+    fn hijack(&mut self, write_buf: WriteBuf<S>, read_buf: ReadBuf<S>) {
+        // self.handle.spawn(self.service.start_websocket(out, inp));
+        unimplemented!()
+    }
 }
 
 pub enum Frame<B>
@@ -30,6 +58,7 @@ where
     Close(u16, B),
 }
 
+/*
 impl<B> Encode for RequestCodec<B>
 where
     B: AsRef<[u8]>,
@@ -46,36 +75,6 @@ where
             Close(code, reason) => write_close(buf, code, reason.as_ref()),
         }
     }
-}
-
-/*
-impl<B> Codec for RequestCodec<B> {
-    type ResponseFuture = R::Future;
-
-    fn recv_mode(&mut self) -> RecvMode {
-        if self.request.as_ref().unwrap().websocket_handshake.is_some() {
-            RecvMode::hijack()
-        } else {
-            RecvMode::buffered_upfront(self.max_request_length)
-        }
-    }
-
-    fn data_received(&mut self, data: &[u8], end: bool)
-        -> Result<Async<usize>, Error>
-    {
-        assert!(end);
-        self.request.as_mut().unwrap().body = data.to_vec();
-        Ok(Async::Ready(data.len()))
-    }
-
-    fn start_response(&mut self, e: Encoder<S>) -> R::Future {
-        self.service.call(self.request.take().unwrap(), e)
-    }
-
-    fn hijack(&mut self, write_buf: WriteBuf<S>, read_buf: ReadBuf<S>){
-        let inp = read_buf.framed(RequestCodec);
-        let out = write_buf.framed(RequestCodec);
-        self.handle.spawn(self.service.start_websocket(out, inp));
 }
 */
 
@@ -114,7 +113,7 @@ pub fn write_packet(buf: &mut Buf, opcode: u8, data: &[u8]) {
 
 // Copied from zero_copy.rs, but with mask removed
 // https://github.com/swindon-rs/tk-http/blob/3520464/src/websocket/zero_copy.rs#L164-L185
-pub fn write_close(buf: &mut Buf, code: u16, reason: &[u8]) {
+pub(crate) fn write_close(buf: &mut Buf, code: u16, reason: &[u8]) {
     assert!(reason.len() <= 123);
     buf.extend(
         &[
@@ -127,11 +126,20 @@ pub fn write_close(buf: &mut Buf, code: u16, reason: &[u8]) {
     buf.extend(reason);
 }
 
-// Copied from zero_copy.rs
+pub(crate) enum ErrorEnum {
+    TooLong,
+    Fragmented,
+    Unmasked,
+    InvalidOpcode(u8),
+}
+
+// Copied from zero_copy.rs, but with errors removed
 // https://github.com/swindon-rs/tk-http/blob/3520464/src/websocket/zero_copy.rs#L55-122
-pub fn parse_frame<'x>(buf: &'x mut Buf, limit: usize, masked: bool)
-    -> Result<Option<(Frame<'x>, usize)>, ErrorEnum>
-{
+pub(crate) fn parse_frame<'a>(
+    buf: &'a mut Buf,
+    limit: usize,
+    masked: bool,
+) -> Result<Option<(Frame<&'a [u8]>, usize)>, ErrorEnum> {
     use self::Frame::*;
 
     if buf.len() < 2 {
@@ -174,8 +182,14 @@ pub fn parse_frame<'x>(buf: &'x mut Buf, limit: usize, masked: bool)
         return Err(ErrorEnum::Unmasked);
     }
     if mask {
-        let mask = [buf[start-4], buf[start-3], buf[start-2], buf[start-1]];
-        for idx in 0..size { // hopefully llvm is smart enough to optimize it
+        let mask = [
+            buf[start - 4],
+            buf[start - 3],
+            buf[start - 2],
+            buf[start - 1],
+        ];
+        for idx in 0..size {
+            // hopefully llvm is smart enough to optimize it
             buf[start + idx] ^= mask[idx % 4];
         }
     }
@@ -183,14 +197,13 @@ pub fn parse_frame<'x>(buf: &'x mut Buf, limit: usize, masked: bool)
     let frame = match opcode {
         0x9 => Ping(data),
         0xA => Pong(data),
-        0x1 => Text(from_utf8(data)?),
+        0x1 => Text(data),
         0x2 => Binary(data),
-        // TODO(tailhook) implement shutdown packets
         0x8 => {
             if data.len() < 2 {
-                Close(1006, "")
+                Close(1006, [].as_ref())
             } else {
-                Close(BigEndian::read_u16(&data[..2]), from_utf8(&data[2..])?)
+                Close(BigEndian::read_u16(&data[..2]), &data[2..])
             }
         }
         x => return Err(ErrorEnum::InvalidOpcode(x)),

@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate prost_derive;
 
+extern crate byteorder;
 extern crate bytes;
 extern crate prost;
 extern crate tk_bufstream;

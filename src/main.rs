@@ -36,15 +36,22 @@ use tokio_core::reactor::Core;
 
 fn petronel_message_filter_map(msg: PetronelMessage) -> Option<Bytes> {
     use PetronelMessage::*;
+    use protobuf::ResponseMessage;
+    use protobuf::response_message::Data::*;
 
-    match msg {
-        Heartbeat => None,
+
+    let data = match msg {
+        Heartbeat => Some(KeepAliveMessage(protobuf::KeepAliveResponse {})),
         Tweet(tweet) => None,
         TweetList(tweets) => None,
         BossUpdate(boss) => None,
         BossList(bosses) => None,
         BossRemove(boss_name) => None,
-    }
+    };
+
+    data.and_then(|d| {
+        websocket::serialize_protobuf(ResponseMessage { data: Some(d) })
+    })
 }
 
 quick_main!(|| -> Result<()> {
@@ -59,7 +66,7 @@ quick_main!(|| -> Result<()> {
     let handle = core.handle();
 
     // TODO: Configurable port
-    let bind_address = "127.0.0.1:3000".parse().chain_err(
+    let bind_address = "0.0.0.0:8080".parse().chain_err(
         || "failed to parse address",
     )?;
     let listener = tokio_core::net::TcpListener::bind(&bind_address, &handle)
@@ -69,29 +76,24 @@ quick_main!(|| -> Result<()> {
         .connector(HttpsConnector::new(4, &handle).chain_err(|| "HTTPS error")?)
         .build(&handle);
 
+    use tokio_io::{AsyncRead, AsyncWrite};
     let (petronel_client, petronel_worker) = ClientBuilder::from_hyper_client(&hyper_client, &token)
             .with_history_size(10)
-            //.with_metrics(metrics::simple(|ref m| serde_json::to_vec(&m).unwrap()))
-            .with_metrics(metrics::simple(|ref m| b"".into()))
-            //.with_subscriber::<Sender>()
+            //.with_metrics(metrics::simple(|ref m| m)) // TODO
+            .with_subscriber::<codec::WebsocketSubscriber<tokio_core::net::TcpStream>>()
             .filter_map_message(petronel_message_filter_map)
             .build();
 
-    unimplemented!();
-
-    /*
-    let mut core = Core::new().expect("failed to create Core");
-    let handle = core.handle();
-
-    let addr = "0.0.0.0:8080".parse().unwrap();
-    let listener = TcpListener::bind(&addr, &handle).unwrap();
     let config = Config::new().done();
 
     let done = listener
         .incoming()
         .sleep_on_error(Duration::from_millis(1000), &handle)
         .map(move |(socket, _addr)| {
-            let dispatcher = codec::RequestDispatcher { handle: handle.clone() };
+            let dispatcher = codec::RequestDispatcher {
+                handle: handle.clone(),
+                petronel_client: petronel_client.clone(),
+            };
 
             Proto::new(socket, &config, dispatcher, &handle)
                 .map_err(|e| eprintln!("Connection error: {}", e))
@@ -99,10 +101,10 @@ quick_main!(|| -> Result<()> {
         })
         .listen(1000);
 
-    println!("Listening on {}", addr);
+    println!("Listening on {}", bind_address);
 
-    core.run(done).unwrap();
-    */
+    core.run(done).expect("failed to run");
+    Ok(())
 });
 
 fn env(name: &str) -> Result<String> {

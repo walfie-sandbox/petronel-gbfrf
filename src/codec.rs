@@ -1,4 +1,6 @@
+use bytes::Bytes;
 use futures::{Async, Future, future};
+use petronel;
 use prost::Message;
 use protobuf;
 use tk_bufstream::{ReadBuf, WriteBuf};
@@ -12,32 +14,43 @@ use websocket::{self, Frame};
 const MAX_REQUEST_LENGTH: usize = 128_000; // Not expecting huge requests here
 const MAX_PACKET_SIZE: usize = 10 << 20;
 
-pub struct RequestDispatcher {
-    pub handle: Handle,
+pub(crate) struct RequestDispatcher<S> {
+    pub(crate) petronel_client: petronel::Client<WebsocketSubscriber<S>>,
+    pub(crate) handle: Handle,
 }
 
-impl<S> Dispatcher<S> for RequestDispatcher
+impl<S> Dispatcher<S> for RequestDispatcher<S>
 where
     S: AsyncRead + AsyncWrite + 'static,
 {
-    type Codec = RequestCodec;
+    type Codec = RequestCodec<S>;
 
     fn headers_received(&mut self, headers: &Head) -> Result<Self::Codec, TkError> {
         let websocket_handshake = headers.get_websocket_upgrade().unwrap_or(None);
 
+        let petronel_client = if websocket_handshake.is_some() {
+            Some(self.petronel_client.clone())
+        } else {
+            None
+        };
+
         Ok(RequestCodec {
+            petronel_client,
             websocket_handshake,
+            subscriber: None,
             handle: self.handle.clone(),
         })
     }
 }
 
-pub struct RequestCodec {
+pub(crate) struct RequestCodec<S> {
+    petronel_client: Option<petronel::Client<WebsocketSubscriber<S>>>,
     websocket_handshake: Option<WebsocketHandshake>,
+    subscriber: Option<WebsocketSubscriber<S>>,
     handle: Handle,
 }
 
-impl<S> Codec<S> for RequestCodec
+impl<S> Codec<S> for RequestCodec<S>
 where
     S: AsyncRead + AsyncWrite + 'static,
 {
@@ -81,46 +94,45 @@ where
         }
     }
 
-    fn hijack(&mut self, mut write_buf: WriteBuf<S>, read_buf: ReadBuf<S>) {
-        let profile_image = {
-            "https://avatars0.githubusercontent.com/u/11370525?v=4&s=64"
-        }.into();
+    fn hijack(&mut self, write_buf: WriteBuf<S>, read_buf: ReadBuf<S>) {
+        let subscription_future = self.petronel_client
+            .take()
+            .expect("petronel_client should be Some")
+            .subscribe(WebsocketSubscriber { write_buf })
+            .map_err(|_| ())
+            .and_then(|subscription| {
+                WebsocketReader {
+                    read_buf,
+                    subscription,
+                }
+            });
 
-        let response = protobuf::ResponseMessage {
-            data: Some(protobuf::response_message::Data::RaidTweetMessage(
-                protobuf::RaidTweetResponse {
-                    boss_name: "Lv60 ユグドラシル・マグナ".into(),
-                    raid_id: "ABCD1234".into(),
-                    screen_name: "walfieee".into(),
-                    tweet_id: 42069,
-                    profile_image,
-                    text: "アイカツ！".into(),
-                    created_at: 1505071158723,
-                    language: protobuf::Language::English as i32,
-                },
-            )),
-        };
-
-        if let Some(message_bytes) = websocket::serialize_protobuf(response) {
-            write_buf.out_buf.extend(&message_bytes);
-            let _ = write_buf.flush();
-        } else {
-            websocket::write_close(&mut write_buf.out_buf, 1011, b"Internal server error");
-        }
-
-        self.handle.spawn(WebsocketHandler {
-            write_buf,
-            read_buf,
-        });
+        self.handle.spawn(subscription_future);
     }
 }
 
-pub struct WebsocketHandler<S> {
+pub(crate) struct WebsocketSubscriber<S> {
     write_buf: WriteBuf<S>,
-    read_buf: ReadBuf<S>,
 }
 
-impl<S> WebsocketHandler<S> {
+impl<S> petronel::Subscriber for WebsocketSubscriber<S>
+where
+    S: AsyncWrite,
+{
+    type Item = Bytes;
+
+    fn send(&mut self, message: &Self::Item) -> Result<(), ()> {
+        self.write_buf.out_buf.extend(message);
+        self.write_buf.flush().map_err(|_| ())
+    }
+}
+
+pub struct WebsocketReader<S> {
+    read_buf: ReadBuf<S>,
+    subscription: petronel::Subscription<WebsocketSubscriber<S>>,
+}
+
+impl<S> WebsocketReader<S> {
     fn handle_frame(frame: Frame<&[u8]>) {
         let parsed = if let Frame::Binary(bytes) = frame {
             protobuf::RequestMessage::decode(bytes)
@@ -132,7 +144,7 @@ impl<S> WebsocketHandler<S> {
     }
 }
 
-impl<S> Future for WebsocketHandler<S>
+impl<S> Future for WebsocketReader<S>
 where
     S: AsyncRead,
 {

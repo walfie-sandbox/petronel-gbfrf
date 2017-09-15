@@ -144,14 +144,35 @@ pub struct WebsocketReader<S> {
 }
 
 impl<S> WebsocketReader<S> {
-    fn handle_frame(frame: Frame<&[u8]>) {
-        let parsed = if let Frame::Binary(bytes) = frame {
-            protobuf::RequestMessage::decode(bytes)
-        } else {
-            return; // TODO: Close websocket
+    fn handle_message(
+        subscription: &mut petronel::Subscription<WebsocketSubscriber<S>>,
+        message: &protobuf::RequestMessage,
+    ) {
+        use protobuf::request_message::Data::*;
+
+        let data = match message.data {
+            Some(ref d) => d,
+            None => return,
         };
 
-        println!("{:#?}", parsed);
+        match data {
+            &AllRaidBossesMessage(_) => subscription.get_bosses(),
+            &RaidBossesMessage(ref req) => {
+                for name in req.boss_names.iter() {
+                    subscription.get_tweets(name)
+                }
+            }
+            &FollowMessage(ref req) => {
+                for name in req.boss_names.iter() {
+                    subscription.follow(name)
+                }
+            }
+            &UnfollowMessage(ref req) => {
+                for name in req.boss_names.iter() {
+                    subscription.unfollow(name)
+                }
+            }
+        }
     }
 }
 
@@ -165,14 +186,24 @@ where
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
         loop {
             let amount_consumed = {
-                websocket::parse_frame(&mut self.read_buf.in_buf, MAX_PACKET_SIZE, true)
-                    .map_err(|_| ())?
-                    .map(|(frame, amount_consumed)| {
-                        // TODO: Convert to message, do stuff with it
-                        Self::handle_frame(frame);
+                let (mut in_buf, subscription) =
+                    (&mut self.read_buf.in_buf, &mut self.subscription);
 
-                        amount_consumed
-                    })
+                let parsed_frame = websocket::parse_frame(&mut in_buf, MAX_PACKET_SIZE, true)
+                    .map_err(|_| ())?;
+
+                if let Some((frame, amount_consumed)) = parsed_frame {
+                    if let Frame::Binary(bytes) = frame {
+                        let message = protobuf::RequestMessage::decode(bytes).map_err(|_| ())?;
+                        Self::handle_message(subscription, &message);
+                    } else {
+                        return Err(());
+                    };
+
+                    Some(amount_consumed)
+                } else {
+                    None
+                }
             };
 
             if let Some(amount) = amount_consumed {

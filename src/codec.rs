@@ -3,6 +3,8 @@ use futures::{Async, Future, future};
 use petronel;
 use prost::Message;
 use protobuf;
+use std::rc::Rc;
+use std::sync::Mutex;
 use tk_bufstream::{ReadBuf, WriteBuf};
 use tk_http::Status;
 use tk_http::server::{Codec, Dispatcher, Encoder, EncoderDone, Error as TkError, Head, RecvMode,
@@ -98,7 +100,9 @@ where
         let subscription_future = self.petronel_client
             .take()
             .expect("petronel_client should be Some")
-            .subscribe(WebsocketSubscriber { write_buf })
+            .subscribe(WebsocketSubscriber {
+                write_buf: Rc::new(Mutex::new(write_buf)),
+            })
             .map_err(|_| ())
             .and_then(|subscription| {
                 WebsocketReader {
@@ -112,7 +116,14 @@ where
 }
 
 pub(crate) struct WebsocketSubscriber<S> {
-    write_buf: WriteBuf<S>,
+    // TODO: Better way to do this that doesn't involve Rc<Mutex<...>>
+    write_buf: Rc<Mutex<WriteBuf<S>>>,
+}
+
+impl<S> Clone for WebsocketSubscriber<S> {
+    fn clone(&self) -> Self {
+        WebsocketSubscriber { write_buf: self.write_buf.clone() }
+    }
 }
 
 impl<S> petronel::Subscriber for WebsocketSubscriber<S>
@@ -122,8 +133,10 @@ where
     type Item = Bytes;
 
     fn send(&mut self, message: &Self::Item) -> Result<(), ()> {
-        self.write_buf.out_buf.extend(message);
-        self.write_buf.flush().map_err(|_| ())
+        // TODO: Better way of doing this that doesn't require Mutex
+        let mut write_buf = self.write_buf.lock().unwrap();
+        write_buf.out_buf.extend(message);
+        write_buf.flush().map_err(|_| ())
     }
 }
 

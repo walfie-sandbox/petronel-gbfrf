@@ -22,29 +22,57 @@ mod codec;
 mod websocket;
 
 use bytes::Bytes;
-use error::*;
 use futures::{Future, Stream};
 use hyper_tls::HttpsConnector;
 use petronel::{Client, ClientBuilder, Subscriber, Subscription, Token};
+use petronel::error::*;
 use petronel::metrics;
 use petronel::model::{BossName, Message as PetronelMessage};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
 use tk_http::server::{Config, Proto};
 use tk_listen::ListenExt;
 use tokio_core::net::TcpListener;
-use tokio_core::reactor::Core;
+use tokio_core::reactor::{Core, Interval};
+
+fn now_as_milliseconds() -> i64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => (duration.as_secs() * 1000) as i64,
+        _ => 0,
+    }
+}
+
+fn language_to_proto(language: petronel::model::Language) -> i32 {
+    use petronel::model::Language::*;
+
+    (match language {
+         English => protobuf::Language::English,
+         Japanese => protobuf::Language::Japanese,
+         Other => protobuf::Language::Unspecified,
+     }) as i32
+}
 
 fn petronel_message_filter_map(msg: PetronelMessage) -> Option<Bytes> {
     use PetronelMessage::*;
     use protobuf::ResponseMessage;
     use protobuf::response_message::Data::*;
 
-
     let data = match msg {
         Heartbeat => Some(KeepAliveMessage(protobuf::KeepAliveResponse {})),
         Tweet(tweet) => None,
         TweetList(tweets) => None,
-        BossUpdate(boss) => None,
+        BossUpdate(boss) => Some(RaidBossesMessage(protobuf::RaidBossesResponse {
+            raid_bosses: vec![
+                protobuf::RaidBoss {
+                    name: boss.name.to_string(),
+                    image: boss.image.clone().map(|i| i.to_string()),
+                    last_seen: now_as_milliseconds(),
+                    level: boss.level as i32,
+                    language: language_to_proto(boss.language),
+                    translated_name: boss.translations.iter().next().map(|t| t.to_string()),
+                },
+            ],
+        })),
         BossList(bosses) => None,
         BossRemove(boss_name) => None,
     };
@@ -86,7 +114,14 @@ quick_main!(|| -> Result<()> {
 
     let config = Config::new().done();
 
-    let done = listener
+    // Send heartbeat every 30 seconds
+    let heartbeat_petronel_client = petronel_client.clone();
+    let heartbeat = Interval::new(Duration::new(30, 0), &core.handle())
+        .chain_err(|| "failed to create Interval")?
+        .for_each(move |_| Ok(heartbeat_petronel_client.heartbeat()))
+        .then(|r| r.chain_err(|| "heartbeat failed"));
+
+    let http_websocket_server = listener
         .incoming()
         .sleep_on_error(Duration::from_millis(1000), &handle)
         .map(move |(socket, _addr)| {
@@ -99,11 +134,14 @@ quick_main!(|| -> Result<()> {
                 .map_err(|e| eprintln!("Connection error: {}", e))
                 .then(|_| Ok(()))
         })
-        .listen(1000);
+        .listen(1000)
+        .map_err(|()| Error::from_kind(ErrorKind::Msg("HTTP/websocket server failed".into())));
 
     println!("Listening on {}", bind_address);
 
-    core.run(done).expect("failed to run");
+    core.run(http_websocket_server.join3(petronel_worker, heartbeat))
+        .chain_err(|| "stream failed")?;
+
     Ok(())
 });
 

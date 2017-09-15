@@ -1,5 +1,5 @@
 use byteorder::{BigEndian, ByteOrder};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{Async, Future, future};
 use prost::Message;
 use protobuf;
@@ -110,13 +110,12 @@ where
             )),
         };
 
-        let mut message_bytes = Vec::new();
-        if let Err(_) = response.encode(&mut message_bytes) {
+        if let Some(message_bytes) = serialize_protobuf(response) {
+            write_buf.out_buf.extend(&message_bytes);
+            let _ = write_buf.flush();
+        } else {
             write_close(&mut write_buf.out_buf, 1011, b"Internal server error");
-        };
-
-        write_frame(&mut write_buf.out_buf, OPCODE_BINARY, &message_bytes);
-        let _ = write_buf.flush();
+        }
 
         self.handle.spawn(WebsocketHandler {
             write_buf,
@@ -190,37 +189,56 @@ where
     Close(u16, B),
 }
 
-// Copied from zero_copy.rs, but with mask removed
+// Serialize protobuf message as part of a binary websocket frame.
+// If serialization fails somehow, we just give up.
+//
+// Based on zero_copy.rs from tk-http.
 // https://github.com/swindon-rs/tk-http/blob/3520464/src/websocket/zero_copy.rs#L124-L162
-pub fn write_frame(buf: &mut Buf, opcode: u8, data: &[u8]) {
-    debug_assert!(opcode & 0xF0 == 0);
-    let first_byte = opcode | 0x80; // always fin
-    match data.len() {
+fn serialize_protobuf<M>(message: M) -> Option<Bytes>
+where
+    M: Message,
+{
+    let first_byte = OPCODE_BINARY | 0x80;
+
+    let mut bytes = match message.encoded_len() {
         len @ 0...125 => {
-            buf.extend(&[first_byte, len as u8]);
+            let init = [first_byte, len as u8];
+            let mut b = BytesMut::with_capacity(init.len() + len);
+            b.extend(&init);
+            b
         }
         len @ 126...65535 => {
-            buf.extend(&[first_byte, 126, (len >> 8) as u8, (len & 0xFF) as u8]);
+            let init = [first_byte, 126, (len >> 8) as u8, (len & 0xFF) as u8];
+            let mut b = BytesMut::with_capacity(init.len() + len);
+            b.extend_from_slice(&init);
+            b
         }
         len => {
-            buf.extend(
-                &[
-                    first_byte,
-                    127,
-                    ((len >> 56) & 0xFF) as u8,
-                    ((len >> 48) & 0xFF) as u8,
-                    ((len >> 40) & 0xFF) as u8,
-                    ((len >> 32) & 0xFF) as u8,
-                    ((len >> 24) & 0xFF) as u8,
-                    ((len >> 16) & 0xFF) as u8,
-                    ((len >> 8) & 0xFF) as u8,
-                    (len & 0xFF) as u8,
-                ],
-            );
-        }
-    }
+            let init = [
+                first_byte,
+                127,
+                ((len >> 56) & 0xFF) as u8,
+                ((len >> 48) & 0xFF) as u8,
+                ((len >> 40) & 0xFF) as u8,
+                ((len >> 32) & 0xFF) as u8,
+                ((len >> 24) & 0xFF) as u8,
+                ((len >> 16) & 0xFF) as u8,
+                ((len >> 8) & 0xFF) as u8,
+                (len & 0xFF) as u8,
+            ];
 
-    buf.extend(data);
+            let mut b = BytesMut::with_capacity(init.len() + len);
+            b.extend_from_slice(&init);
+            b
+        }
+    };
+
+    if let Err(e) = message.encode(&mut bytes) {
+        println!("{:?}", e);
+        None
+    } else {
+        Some(bytes.freeze())
+    }
 }
 
 // Copied from zero_copy.rs, but with mask removed

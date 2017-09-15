@@ -1,32 +1,59 @@
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
-use futures::{Async, Future};
+use futures::{Async, Future, future};
+use prost::Message;
+use protobuf;
+use std::io::Write;
 use std::marker::PhantomData;
 use tk_bufstream::{Buf, Decode, Encode};
 use tk_bufstream::{ReadBuf, WriteBuf};
-use tk_http::server::{Codec, Dispatcher, Encoder, EncoderDone, Error as TkError, Head, RecvMode};
+use tk_http::Status;
+use tk_http::server::{Codec, Dispatcher, Encoder, EncoderDone, Error as TkError, Head, RecvMode,
+                      WebsocketHandshake};
+use tokio_core::reactor::Handle;
+use tokio_io::{AsyncRead, AsyncWrite};
 
 const MAX_REQUEST_LENGTH: usize = 128_000; // Not expecting huge requests here
+const MAX_PACKET_SIZE: usize = 10 << 20;
 
-pub struct RequestDispatcher {}
+const OPCODE_PING: u8 = 0x9;
+const OPCODE_PONG: u8 = 0xA;
+const OPCODE_TEXT: u8 = 0x1;
+const OPCODE_BINARY: u8 = 0x2;
 
-impl<S> Dispatcher<S> for RequestDispatcher {
+pub struct RequestDispatcher {
+    pub handle: Handle,
+}
+
+impl<S> Dispatcher<S> for RequestDispatcher
+where
+    S: AsyncRead + AsyncWrite + 'static,
+{
     type Codec = RequestCodec;
 
     fn headers_received(&mut self, headers: &Head) -> Result<Self::Codec, TkError> {
-        unimplemented!()
+        let websocket_handshake = headers.get_websocket_upgrade().unwrap_or(None);
+
+        Ok(RequestCodec {
+            websocket_handshake,
+            handle: self.handle.clone(),
+        })
     }
 }
 
 pub struct RequestCodec {
-    is_websocket: bool,
+    websocket_handshake: Option<WebsocketHandshake>,
+    handle: Handle,
 }
 
-impl<S> Codec<S> for RequestCodec {
+impl<S> Codec<S> for RequestCodec
+where
+    S: AsyncRead + AsyncWrite + 'static,
+{
     type ResponseFuture = Box<Future<Item = EncoderDone<S>, Error = TkError>>;
 
     fn recv_mode(&mut self) -> RecvMode {
-        if self.is_websocket {
+        if self.websocket_handshake.is_some() {
             RecvMode::hijack()
         } else {
             RecvMode::buffered_upfront(MAX_REQUEST_LENGTH)
@@ -34,16 +61,121 @@ impl<S> Codec<S> for RequestCodec {
     }
 
     fn data_received(&mut self, data: &[u8], end: bool) -> Result<Async<usize>, TkError> {
-        unimplemented!()
+        // TODO: Handle request
+        Ok(Async::Ready(data.len()))
     }
 
-    fn start_response(&mut self, e: Encoder<S>) -> Self::ResponseFuture {
-        unimplemented!()
+    fn start_response(&mut self, mut e: Encoder<S>) -> Self::ResponseFuture {
+        if let Some(ref ws) = self.websocket_handshake {
+            e.status(Status::SwitchingProtocol);
+            e.add_header("Connection", "upgrade").unwrap();
+            e.add_header("Upgrade", "websocket").unwrap();
+            e.format_header("Sec-Websocket-Accept", &ws.accept).unwrap();
+            e.format_header("Sec-Websocket-Protocol", "binary").unwrap();
+            e.done_headers().unwrap();
+            Box::new(future::ok(e.done())) as Self::ResponseFuture
+        } else {
+            // TODO
+            let body = "Not implemented yet";
+
+            e.status(Status::Ok);
+            e.add_header("Content-Type", "text/plain").unwrap();
+            e.add_length(body.as_bytes().len() as u64).unwrap();
+
+            if e.done_headers().unwrap() {
+                e.write_body(body.as_bytes());
+            }
+
+            Box::new(future::ok(e.done())) as Self::ResponseFuture
+        }
     }
 
-    fn hijack(&mut self, write_buf: WriteBuf<S>, read_buf: ReadBuf<S>) {
-        // self.handle.spawn(self.service.start_websocket(out, inp));
-        unimplemented!()
+    fn hijack(&mut self, mut write_buf: WriteBuf<S>, read_buf: ReadBuf<S>) {
+        let profile_image = {
+            "https://avatars0.githubusercontent.com/u/11370525?v=4&s=64"
+        }.into();
+
+        let response = protobuf::ResponseMessage {
+            data: Some(protobuf::response_message::Data::RaidTweetMessage(
+                protobuf::RaidTweetResponse {
+                    boss_name: "Lv60 ユグドラシル・マグナ".into(),
+                    raid_id: "ABCD1234".into(),
+                    screen_name: "walfieee".into(),
+                    tweet_id: 42069,
+                    profile_image,
+                    text: "アイカツ！".into(),
+                    created_at: 1505071158723,
+                    language: protobuf::Language::English as i32,
+                },
+            )),
+        };
+
+        let mut message_bytes = Vec::new();
+        if let Err(_) = response.encode(&mut message_bytes) {
+            write_close(&mut write_buf.out_buf, 1011, b"Internal server error");
+        };
+
+        write_frame(&mut write_buf.out_buf, OPCODE_BINARY, &message_bytes);
+        let _ = write_buf.flush();
+
+        self.handle.spawn(WebsocketHandler {
+            write_buf,
+            read_buf,
+        });
+    }
+}
+
+pub struct WebsocketHandler<S> {
+    write_buf: WriteBuf<S>,
+    read_buf: ReadBuf<S>,
+}
+
+impl<S> WebsocketHandler<S> {
+    fn handle_frame(frame: Frame<&[u8]>) {
+        let parsed = if let Frame::Binary(bytes) = frame {
+            protobuf::RequestMessage::decode(bytes)
+        } else {
+            return; // TODO: Close websocket
+        };
+
+        println!("{:#?}", parsed);
+    }
+}
+
+impl<S> Future for WebsocketHandler<S>
+where
+    S: AsyncRead,
+{
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
+        loop {
+            let amount_consumed = {
+                parse_frame(&mut self.read_buf.in_buf, MAX_PACKET_SIZE, true)
+                    .map_err(|_| ())?
+                    .map(|(frame, amount_consumed)| {
+                        // TODO: Convert to message, do stuff with it
+                        Self::handle_frame(frame);
+
+                        amount_consumed
+                    })
+            };
+
+            if let Some(amount) = amount_consumed {
+                self.read_buf.in_buf.consume(amount);
+            } else {
+                let bytes_read = self.read_buf.read().map_err(|_| ())?;
+
+                if bytes_read == 0 {
+                    if self.read_buf.done() {
+                        return Ok(Async::Ready(()));
+                    } else {
+                        return Ok(Async::NotReady);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -51,36 +183,16 @@ pub enum Frame<B>
 where
     B: AsRef<[u8]>,
 {
-    Ping(B),
-    Pong(B),
-    Text(B),
-    Binary(B),
+    Ping(B), // 0x9
+    Pong(B), // 0xA
+    Text(B), // 0x1
+    Binary(B), // 0x2
     Close(u16, B),
 }
 
-/*
-impl<B> Encode for RequestCodec<B>
-where
-    B: AsRef<[u8]>,
-{
-    type Item = Frame<B>;
-
-    fn encode(&mut self, data: Self::Item, buf: &mut Buf) {
-        use self::Frame::*;
-        match data {
-            Ping(data) => write_packet(buf, 0x9, data.as_ref()),
-            Pong(data) => write_packet(buf, 0xA, data.as_ref()),
-            Text(data) => write_packet(buf, 0x1, data.as_ref()),
-            Binary(data) => write_packet(buf, 0x2, data.as_ref()),
-            Close(code, reason) => write_close(buf, code, reason.as_ref()),
-        }
-    }
-}
-*/
-
 // Copied from zero_copy.rs, but with mask removed
 // https://github.com/swindon-rs/tk-http/blob/3520464/src/websocket/zero_copy.rs#L124-L162
-pub fn write_packet(buf: &mut Buf, opcode: u8, data: &[u8]) {
+pub fn write_frame(buf: &mut Buf, opcode: u8, data: &[u8]) {
     debug_assert!(opcode & 0xF0 == 0);
     let first_byte = opcode | 0x80; // always fin
     match data.len() {

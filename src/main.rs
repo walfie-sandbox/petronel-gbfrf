@@ -21,66 +21,14 @@ mod protobuf;
 mod codec;
 mod websocket;
 
-use bytes::Bytes;
 use futures::{Future, Stream};
 use hyper_tls::HttpsConnector;
-use petronel::{Client, ClientBuilder, Subscriber, Subscription, Token};
+use petronel::{ClientBuilder, Token};
 use petronel::error::*;
-use petronel::metrics;
-use petronel::model::{BossName, Message as PetronelMessage};
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
 use tk_http::server::{Config, Proto};
 use tk_listen::ListenExt;
-use tokio_core::net::TcpListener;
 use tokio_core::reactor::{Core, Interval};
-
-fn now_as_milliseconds() -> i64 {
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => (duration.as_secs() * 1000) as i64,
-        _ => 0,
-    }
-}
-
-fn language_to_proto(language: petronel::model::Language) -> i32 {
-    use petronel::model::Language::*;
-
-    (match language {
-         English => protobuf::Language::English,
-         Japanese => protobuf::Language::Japanese,
-         Other => protobuf::Language::Unspecified,
-     }) as i32
-}
-
-fn petronel_message_filter_map(msg: PetronelMessage) -> Option<Bytes> {
-    use PetronelMessage::*;
-    use protobuf::ResponseMessage;
-    use protobuf::response_message::Data::*;
-
-    let data = match msg {
-        Heartbeat => Some(KeepAliveMessage(protobuf::KeepAliveResponse {})),
-        Tweet(tweet) => None,
-        TweetList(tweets) => None,
-        BossUpdate(boss) => Some(RaidBossesMessage(protobuf::RaidBossesResponse {
-            raid_bosses: vec![
-                protobuf::RaidBoss {
-                    name: boss.name.to_string(),
-                    image: boss.image.clone().map(|i| i.to_string()),
-                    last_seen: now_as_milliseconds(),
-                    level: boss.level as i32,
-                    language: language_to_proto(boss.language),
-                    translated_name: boss.translations.iter().next().map(|t| t.to_string()),
-                },
-            ],
-        })),
-        BossList(bosses) => None,
-        BossRemove(boss_name) => None,
-    };
-
-    data.and_then(|d| {
-        websocket::serialize_protobuf(ResponseMessage { data: Some(d) })
-    })
-}
 
 quick_main!(|| -> Result<()> {
     let token = Token::new(
@@ -104,12 +52,11 @@ quick_main!(|| -> Result<()> {
         .connector(HttpsConnector::new(4, &handle).chain_err(|| "HTTPS error")?)
         .build(&handle);
 
-    use tokio_io::{AsyncRead, AsyncWrite};
     let (petronel_client, petronel_worker) = ClientBuilder::from_hyper_client(&hyper_client, &token)
             .with_history_size(10)
             //.with_metrics(metrics::simple(|ref m| m)) // TODO
             .with_subscriber::<codec::WebsocketSubscriber<tokio_core::net::TcpStream>>()
-            .filter_map_message(petronel_message_filter_map)
+            .filter_map_message(protobuf::convert::petronel_message_to_bytes)
             .build();
 
     let config = Config::new().done();

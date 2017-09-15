@@ -39,7 +39,6 @@ where
         Ok(RequestCodec {
             petronel_client,
             websocket_handshake,
-            subscriber: None,
             handle: self.handle.clone(),
         })
     }
@@ -48,7 +47,6 @@ where
 pub(crate) struct RequestCodec<S> {
     petronel_client: Option<petronel::Client<WebsocketSubscriber<S>>>,
     websocket_handshake: Option<WebsocketHandshake>,
-    subscriber: Option<WebsocketSubscriber<S>>,
     handle: Handle,
 }
 

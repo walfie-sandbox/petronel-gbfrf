@@ -4,6 +4,7 @@ use petronel;
 use petronel::model::BossName;
 use prost::Message;
 use protobuf;
+use serde_json;
 use std::rc::Rc;
 use std::sync::Mutex;
 use tk_bufstream::{ReadBuf, WriteBuf};
@@ -90,13 +91,28 @@ where
                 .map_err(|_| TkError::custom("closed by sender"));
 
             Box::new(resp) as Self::ResponseFuture
-        } else {
-            // TODO
-            let body = "Not implemented yet";
+        } else if self.path == "/bosses.json" {
+            let resp = self.petronel_client
+                .bosses()
+                .map(|boss_list| {
+                    let body = serde_json::to_vec(&boss_list).unwrap();
+                    e.status(Status::Ok);
+                    e.add_length(body.len() as u64).unwrap();
+                    e.add_header("Content-Type", "application/json").unwrap();
+                    if e.done_headers().unwrap() {
+                        e.write_body(body.as_ref());
+                    }
+                    e.done()
+                })
+                .map_err(|_| TkError::custom("closed by sender"));
 
-            e.status(Status::Ok);
+            Box::new(resp) as Self::ResponseFuture
+        } else {
+            let body = "Not found";
+
+            e.status(Status::NotFound);
             e.add_header("Content-Type", "text/plain").unwrap();
-            e.add_length(body.as_bytes().len() as u64).unwrap();
+            e.add_length(body.len() as u64).unwrap();
 
             if e.done_headers().unwrap() {
                 e.write_body(body.as_bytes());

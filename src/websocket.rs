@@ -90,7 +90,7 @@ pub(crate) enum ErrorEnum {
     InvalidOpcode(u8),
 }
 
-// Copied from zero_copy.rs, but with errors removed
+// Copied from zero_copy.rs
 // https://github.com/swindon-rs/tk-http/blob/3520464/src/websocket/zero_copy.rs#L55-122
 pub(crate) fn parse_frame<'a>(
     buf: &'a mut Buf,

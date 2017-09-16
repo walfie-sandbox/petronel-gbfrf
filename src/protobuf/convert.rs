@@ -62,12 +62,13 @@ pub(crate) fn petronel_message_to_bytes(msg: PetronelMessage) -> Option<Bytes> {
     let data = match msg {
         Heartbeat => Some(KeepAliveMessage(protobuf::KeepAliveResponse {})),
         Tweet(tweet) => Some(RaidTweetMessage(tweet_to_proto(tweet))),
-        TweetList(tweets) => None, // TODO
+        TweetList(tweets) => None,
         BossUpdate(boss) => Some(RaidBossesMessage(protobuf::RaidBossesResponse {
-            // TODO: Should follow boss if the translated boss is being followed
             raid_bosses: vec![boss_to_proto(boss)],
         })),
-        BossList(bosses) => None, // TODO
+        BossList(bosses) => Some(RaidBossesMessage(protobuf::RaidBossesResponse {
+            raid_bosses: bosses.iter().cloned().map(boss_to_proto).collect(),
+        })),
         BossRemove(boss_name) => None, // TODO
     };
 

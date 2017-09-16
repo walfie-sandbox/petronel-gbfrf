@@ -49,7 +49,7 @@ quick_main!(|| -> Result<()> {
         .chain_err(|| "failed to bind TCP listener")?;
 
     let hyper_client = hyper::Client::configure()
-        .connector(HttpsConnector::new(4, &handle).chain_err(|| "HTTPS error")?)
+        .connector(HttpsConnector::new(1, &handle).chain_err(|| "HTTPS error")?)
         .build(&handle);
 
     let (petronel_client, petronel_worker) = ClientBuilder::from_hyper_client(&hyper_client, &token)

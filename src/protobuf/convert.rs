@@ -62,14 +62,34 @@ pub(crate) fn petronel_message_to_bytes(msg: PetronelMessage) -> Option<Bytes> {
     let data = match msg {
         Heartbeat => Some(KeepAliveMessage(protobuf::KeepAliveResponse {})),
         Tweet(tweet) => Some(RaidTweetMessage(tweet_to_proto(tweet))),
-        TweetList(tweets) => None,
+        TweetList(tweets) => {
+            // TODO: This is pretty inefficient
+            let mut total_len = 0;
+            let mut frames = Vec::with_capacity(tweets.len());
+
+            for tweet in tweets {
+                let message = RaidTweetMessage(tweet_to_proto(tweet));
+                let response = ResponseMessage { data: Some(message) };
+                if let Some(bytes) = websocket::serialize_protobuf(response) {
+                    total_len += bytes.len();
+                    frames.push(bytes);
+                }
+            }
+
+            let mut bytes = Bytes::with_capacity(total_len);
+            for frame in frames {
+                bytes.extend(frame);
+            }
+
+            return Some(bytes);
+        }
         BossUpdate(boss) => Some(RaidBossesMessage(protobuf::RaidBossesResponse {
             raid_bosses: vec![boss_to_proto(boss)],
         })),
         BossList(bosses) => Some(RaidBossesMessage(protobuf::RaidBossesResponse {
             raid_bosses: bosses.iter().cloned().map(boss_to_proto).collect(),
         })),
-        BossRemove(boss_name) => None, // TODO
+        BossRemove(_boss_name) => None,
     };
 
     data.and_then(|d| {

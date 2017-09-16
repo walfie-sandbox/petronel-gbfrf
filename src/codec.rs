@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use futures::{Async, Future, future};
 use petronel;
+use petronel::model::BossName;
 use prost::Message;
 use protobuf;
 use std::rc::Rc;
@@ -163,8 +164,10 @@ impl<S> WebsocketReader<S> {
                 }
             }
             &FollowMessage(ref req) => {
-                for name in req.boss_names.iter() {
-                    subscription.follow(name)
+                for boss_name in req.boss_names.iter() {
+                    let name = BossName::from(boss_name);
+                    subscription.follow(name.clone());
+                    subscription.get_tweets(name);
                 }
             }
             &UnfollowMessage(ref req) => {

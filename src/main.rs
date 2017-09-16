@@ -3,13 +3,14 @@ extern crate prost_derive;
 #[macro_use]
 extern crate error_chain;
 
-extern crate hyper;
-extern crate hyper_tls;
 extern crate byteorder;
 extern crate bytes;
 extern crate futures;
+extern crate hyper;
+extern crate hyper_tls;
 extern crate petronel;
 extern crate prost;
+extern crate serde_json;
 extern crate tk_bufstream;
 extern crate tk_http;
 extern crate tk_listen;
@@ -52,9 +53,12 @@ quick_main!(|| -> Result<()> {
         .connector(HttpsConnector::new(1, &handle).chain_err(|| "HTTPS error")?)
         .build(&handle);
 
-    let (petronel_client, petronel_worker) = ClientBuilder::from_hyper_client(&hyper_client, &token)
+    let (petronel_client, petronel_worker) =
+        ClientBuilder::from_hyper_client(&hyper_client, &token)
             .with_history_size(10)
-            //.with_metrics(metrics::simple(|ref m| m)) // TODO
+            .with_metrics(petronel::metrics::simple(
+                |ref m| serde_json::to_vec(&m).unwrap(),
+            ))
             .with_subscriber::<codec::WebsocketSubscriber<tokio_core::net::TcpStream>>()
             .filter_map_message(protobuf::convert::petronel_message_to_bytes)
             .build();

@@ -18,7 +18,7 @@ const MAX_REQUEST_LENGTH: usize = 128_000; // Not expecting huge requests here
 const MAX_PACKET_SIZE: usize = 10 << 20;
 
 pub(crate) struct RequestDispatcher<S> {
-    pub(crate) petronel_client: petronel::Client<WebsocketSubscriber<S>>,
+    pub(crate) petronel_client: petronel::Client<WebsocketSubscriber<S>, Vec<u8>>,
     pub(crate) handle: Handle,
 }
 
@@ -31,14 +31,9 @@ where
     fn headers_received(&mut self, headers: &Head) -> Result<Self::Codec, TkError> {
         let websocket_handshake = headers.get_websocket_upgrade().unwrap_or(None);
 
-        let petronel_client = if websocket_handshake.is_some() {
-            Some(self.petronel_client.clone())
-        } else {
-            None
-        };
-
         Ok(RequestCodec {
-            petronel_client,
+            petronel_client: self.petronel_client.clone(),
+            path: headers.path().unwrap().to_string(),
             websocket_handshake,
             handle: self.handle.clone(),
         })
@@ -46,7 +41,8 @@ where
 }
 
 pub(crate) struct RequestCodec<S> {
-    petronel_client: Option<petronel::Client<WebsocketSubscriber<S>>>,
+    petronel_client: petronel::Client<WebsocketSubscriber<S>, Vec<u8>>,
+    path: String,
     websocket_handshake: Option<WebsocketHandshake>,
     handle: Handle,
 }
@@ -79,6 +75,21 @@ where
             e.format_header("Sec-Websocket-Protocol", "binary").unwrap();
             e.done_headers().unwrap();
             Box::new(future::ok(e.done())) as Self::ResponseFuture
+        } else if self.path == "/metrics.json" {
+            let resp = self.petronel_client
+                .export_metrics()
+                .map(|metrics| {
+                    e.status(Status::Ok);
+                    e.add_length(metrics.len() as u64).unwrap();
+                    e.add_header("Content-Type", "application/json").unwrap();
+                    if e.done_headers().unwrap() {
+                        e.write_body(metrics.as_ref());
+                    }
+                    e.done()
+                })
+                .map_err(|_| TkError::custom("closed by sender"));
+
+            Box::new(resp) as Self::ResponseFuture
         } else {
             // TODO
             let body = "Not implemented yet";
@@ -97,8 +108,6 @@ where
 
     fn hijack(&mut self, write_buf: WriteBuf<S>, read_buf: ReadBuf<S>) {
         let subscription_future = self.petronel_client
-            .take()
-            .expect("petronel_client should be Some")
             .subscribe(WebsocketSubscriber {
                 write_buf: Rc::new(Mutex::new(write_buf)),
             })
@@ -141,12 +150,12 @@ where
 
 pub struct WebsocketReader<S> {
     read_buf: ReadBuf<S>,
-    subscription: petronel::Subscription<WebsocketSubscriber<S>>,
+    subscription: petronel::Subscription<WebsocketSubscriber<S>, Vec<u8>>,
 }
 
 impl<S> WebsocketReader<S> {
     fn handle_message(
-        subscription: &mut petronel::Subscription<WebsocketSubscriber<S>>,
+        subscription: &mut petronel::Subscription<WebsocketSubscriber<S>, Vec<u8>>,
         message: &protobuf::RequestMessage,
     ) {
         use protobuf::request_message::Data::*;

@@ -57,9 +57,12 @@ quick_main!(|| -> Result<()> {
         .build(&handle);
 
     // TODO: Make cache optional
-    let cache = persistence::Cache::new(env("REDIS_URL")?, "bosses".to_string())?;
-    // TODO: Check if new cache exists before getting legacy bosses
-    let bosses = cache.get_legacy_bosses()?;
+    let cache = persistence::Cache::new(
+        env("REDIS_URL")?,
+        "petronel_bosses".to_string(),
+        Some("bosses".to_string()),
+    )?;
+    let bosses = cache.get_bosses()?;
 
     let (petronel_client, petronel_worker) =
         ClientBuilder::from_hyper_client(&hyper_client, &token)

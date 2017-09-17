@@ -28,7 +28,7 @@ tokio-io = "0.1"
 
 [dependencies.petronel]
 git = "https://github.com/walfie/petronel.git"
-rev = "97ac7d838e7890f503c0f86ef4571bcc9d4a7fd4"
+rev = "050e367a21fdde841473e7a94b71b5ac2be43bcd"
 
 [dependencies.serde]
 # TODO: Change petronel to not depend on this

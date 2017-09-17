@@ -67,34 +67,4 @@ impl Cache {
 
         Ok(output)
     }
-
-    // TODO: Do I even need this? Maybe not.
-    /*
-    fn get_legacy_translations(&self) -> Result<HashMap<BossName, BossName>> {
-        let bytes: Vec<u8> = self.redis_connection
-            .get(&self.legacy_translations_key)
-            .chain_err(|| "failed to get translation data from cache")?;
-
-        let translation_proto = protobuf::TranslationDataCacheItem::decode(bytes)
-            .chain_err(|| "failed to parse translation data from cache")?
-            .data;
-
-        let mut translations: HashMap<BossName, BossName> = HashMap::new();
-
-        for data1 in translation_proto.iter() {
-            for data2 in translation_proto.iter() {
-                if data1.language != data2.language && data1.level == data2.level &&
-                    data1.image_hash == data2.image_hash
-                {
-                    let name1 = BossName::from(&data1.name);
-                    let name2 = BossName::from(&data2.name);
-                    translations.insert(name1.clone(), name2.clone());
-                    translations.insert(name2, name1);
-                }
-            }
-        }
-
-        Ok(translations)
-    }
-    */
 }

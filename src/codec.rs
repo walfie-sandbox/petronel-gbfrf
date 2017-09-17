@@ -76,7 +76,7 @@ where
             e.format_header("Sec-Websocket-Protocol", "binary").unwrap();
             e.done_headers().unwrap();
             Box::new(future::ok(e.done())) as Self::ResponseFuture
-        } else if self.path == "/metrics.json" {
+        } else if self.path == "/api/metrics.json" {
             let resp = self.petronel_client
                 .export_metrics()
                 .map(|metrics| {
@@ -91,7 +91,7 @@ where
                 .map_err(|_| TkError::custom("closed by sender"));
 
             Box::new(resp) as Self::ResponseFuture
-        } else if self.path == "/bosses.json" {
+        } else if self.path == "/api/bosses.json" {
             let resp = self.petronel_client
                 .bosses()
                 .map(|boss_list| {

@@ -109,8 +109,17 @@ impl Cache {
 
     pub fn get_bosses(&self) -> Result<Vec<RaidBossMetadata>> {
         let bosses = self.get_petronel_bosses()?;
+
         if bosses.is_empty() {
-            self.get_legacy_bosses()
+            let legacy_bosses = self.get_legacy_bosses()?;
+            if !legacy_bosses.is_empty() {
+                eprintln!(
+                    "Legacy gbf-raidfinder boss cache found. Importing bosses to new format."
+                );
+                self.save_bosses(&legacy_bosses)?;
+            }
+
+            Ok(legacy_bosses)
         } else {
             Ok(bosses)
         }
@@ -164,7 +173,7 @@ impl Cache {
                 };
 
                 let last_seen = DateTime::<Utc>::from_utc(
-                    NaiveDateTime::from_timestamp(boss_proto.last_seen, 0),
+                    NaiveDateTime::from_timestamp(boss_proto.last_seen / 1000, 0),
                     Utc,
                 );
 

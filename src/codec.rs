@@ -122,7 +122,11 @@ where
         }
     }
 
-    fn hijack(&mut self, write_buf: WriteBuf<S>, read_buf: ReadBuf<S>) {
+    fn hijack(&mut self, mut write_buf: WriteBuf<S>, read_buf: ReadBuf<S>) {
+        // Send a Ping frame to start the connection
+        write_buf.out_buf.extend(websocket::EMPTY_PING);
+        let _ = write_buf.flush();
+
         let subscription_future = self.petronel_client
             .subscribe(WebsocketSubscriber {
                 write_buf: Rc::new(Mutex::new(write_buf)),
@@ -224,6 +228,8 @@ where
                     if let Frame::Binary(bytes) = frame {
                         let message = protobuf::RequestMessage::decode(bytes).map_err(|_| ())?;
                         Self::handle_message(subscription, &message);
+                    } else if let Frame::Pong(_) = frame {
+                        // Ignore
                     } else {
                         return Err(());
                     };

@@ -16,6 +16,16 @@ fn now_as_milliseconds() -> i64 {
     }
 }
 
+pub(crate) fn language_from_proto(language: i32) -> petronel::model::Language {
+    use petronel::model::Language::*;
+
+    match language {
+        1 => Japanese,
+        2 => English,
+        _ => Other,
+    }
+}
+
 fn language_to_proto(language: petronel::model::Language) -> i32 {
     use petronel::model::Language::*;
 

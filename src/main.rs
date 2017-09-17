@@ -5,11 +5,13 @@ extern crate error_chain;
 
 extern crate byteorder;
 extern crate bytes;
+extern crate chrono;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_tls;
 extern crate petronel;
 extern crate prost;
+extern crate redis;
 extern crate serde_json;
 extern crate tk_bufstream;
 extern crate tk_http;
@@ -17,6 +19,7 @@ extern crate tk_listen;
 extern crate tokio_core;
 extern crate tokio_io;
 
+mod persistence;
 mod error;
 mod protobuf;
 mod codec;
@@ -53,14 +56,20 @@ quick_main!(|| -> Result<()> {
         .connector(HttpsConnector::new(1, &handle).chain_err(|| "HTTPS error")?)
         .build(&handle);
 
+    // TODO: Make cache optional
+    let cache = persistence::Cache::new(env("REDIS_URL")?, "bosses".to_string())?;
+    // TODO: Check if new cache exists before getting legacy bosses
+    let bosses = cache.get_legacy_bosses()?;
+
     let (petronel_client, petronel_worker) =
         ClientBuilder::from_hyper_client(&hyper_client, &token)
             .with_history_size(10)
+            .with_subscriber::<codec::WebsocketSubscriber<tokio_core::net::TcpStream>>()
+            .filter_map_message(protobuf::convert::petronel_message_to_bytes)
+            .with_bosses(bosses)
             .with_metrics(petronel::metrics::simple(
                 |ref m| serde_json::to_vec(&m).unwrap(),
             ))
-            .with_subscriber::<codec::WebsocketSubscriber<tokio_core::net::TcpStream>>()
-            .filter_map_message(protobuf::convert::petronel_message_to_bytes)
             .build();
 
     let config = Config::new().done();

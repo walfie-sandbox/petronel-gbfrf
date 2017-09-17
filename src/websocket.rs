@@ -4,6 +4,7 @@ use prost::Message;
 use tk_bufstream::Buf;
 
 const OPCODE_BINARY: u8 = 0x2;
+pub(crate) const EMPTY_PING: &[u8] = &[0x9 | 0x80, 0];
 
 pub(crate) enum Frame<B>
 where

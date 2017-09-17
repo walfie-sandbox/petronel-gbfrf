@@ -37,6 +37,10 @@ use tk_http::server::{Config, Proto};
 use tk_listen::ListenExt;
 use tokio_core::reactor::{Core, Interval, Timeout};
 
+const HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
+const REDIS_TIMEOUT_SECONDS: u64 = 5;
+const CACHE_FLUSH_INTERVAL_SECONDS: u64 = 60 * 3;
+
 quick_main!(|| -> Result<()> {
     let token = Token::new(
         env("CONSUMER_KEY")?,
@@ -68,7 +72,6 @@ quick_main!(|| -> Result<()> {
         Some("bosses".to_string()),
     );
 
-    const REDIS_TIMEOUT_SECONDS: u64 = 5;
     let redis_timeout = Timeout::new(Duration::new(REDIS_TIMEOUT_SECONDS, 0), &handle).unwrap();
 
     // Wow, timeouts are incredibly annoying to use...
@@ -95,9 +98,9 @@ quick_main!(|| -> Result<()> {
             ))
             .build();
 
-    // Flush cache every 3 minutes
+    // Flush cache periodically
     let cache_petronel_client = petronel_client.clone();
-    let cache_flush = Interval::new(Duration::new(30, 0), &core.handle())
+    let cache_flush = Interval::new(Duration::new(CACHE_FLUSH_INTERVAL_SECONDS, 0), &handle)
         .unwrap()
         .then(|r| r.chain_err(|| "failed to create Interval"))
         .and_then(move |_| cache_petronel_client.export_metadata())
@@ -105,9 +108,9 @@ quick_main!(|| -> Result<()> {
         .then(|r| r.chain_err(|| "cache flush failed"))
         .join(cache_worker);
 
-    // Send heartbeat every 30 seconds
+    // Send heartbeats periodically
     let heartbeat_petronel_client = petronel_client.clone();
-    let heartbeat = Interval::new(Duration::new(30, 0), &core.handle())
+    let heartbeat = Interval::new(Duration::new(HEARTBEAT_INTERVAL_SECONDS, 0), &handle)
         .chain_err(|| "failed to create Interval")?
         .for_each(move |_| Ok(heartbeat_petronel_client.heartbeat()))
         .then(|r| r.chain_err(|| "heartbeat failed"));

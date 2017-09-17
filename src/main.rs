@@ -1,116 +1,103 @@
 #[macro_use]
 extern crate prost_derive;
+#[macro_use]
+extern crate error_chain;
 
-extern crate prost;
-extern crate tk_listen;
-extern crate tk_http;
-extern crate tokio_core;
+extern crate byteorder;
+extern crate bytes;
 extern crate futures;
+extern crate hyper;
+extern crate hyper_tls;
+extern crate petronel;
+extern crate prost;
+extern crate serde_json;
+extern crate tk_bufstream;
+extern crate tk_http;
+extern crate tk_listen;
+extern crate tokio_core;
+extern crate tokio_io;
 
+mod error;
 mod protobuf;
+mod codec;
+mod websocket;
 
 use futures::{Future, Stream};
-use futures::future::{self, FutureResult};
-use prost::Message;
+use hyper_tls::HttpsConnector;
+use petronel::{ClientBuilder, Token};
+use petronel::error::*;
 use std::time::Duration;
-use tk_http::Status;
-use tk_http::server::{Config, Encoder, EncoderDone, Error, Proto};
-use tk_http::server::buffered::{BufferedDispatcher, Request};
-use tk_http::websocket::Packet;
+use tk_http::server::{Config, Proto};
 use tk_listen::ListenExt;
-use tokio_core::net::TcpListener;
-use tokio_core::reactor::Core;
+use tokio_core::reactor::{Core, Interval};
 
-fn process_http<S>(req: Request, mut e: Encoder<S>) -> FutureResult<EncoderDone<S>, Error> {
-    if let Some(ws) = req.websocket_handshake() {
-        e.status(Status::SwitchingProtocol);
-        e.add_header("Connection", "upgrade").unwrap();
-        e.add_header("Upgrade", "websocket").unwrap();
-        e.format_header("Sec-Websocket-Accept", &ws.accept).unwrap();
-        e.format_header("Sec-Websocket-Protocol", "binary").unwrap();
-        e.done_headers().unwrap();
-        future::ok(e.done())
-    } else {
-        let body = "Not implemented yet";
+quick_main!(|| -> Result<()> {
+    let token = Token::new(
+        env("CONSUMER_KEY")?,
+        env("CONSUMER_SECRET")?,
+        env("ACCESS_TOKEN")?,
+        env("ACCESS_TOKEN_SECRET")?,
+    );
 
-        e.status(Status::Ok);
-        e.add_header("Content-Type", "text/plain").unwrap();
-        e.add_length(body.as_bytes().len() as u64).unwrap();
-
-        if e.done_headers().unwrap() {
-            e.write_body(body.as_bytes());
-        }
-
-        future::ok(e.done())
-    }
-}
-
-fn main() {
-    let mut core = Core::new().expect("failed to create Core");
+    let mut core = Core::new().chain_err(|| "failed to create Core")?;
     let handle = core.handle();
 
-    let addr = "0.0.0.0:8080".parse().unwrap();
-    let listener = TcpListener::bind(&addr, &handle).unwrap();
+    // TODO: Configurable port
+    let bind_address = "0.0.0.0:8080".parse().chain_err(
+        || "failed to parse address",
+    )?;
+    let listener = tokio_core::net::TcpListener::bind(&bind_address, &handle)
+        .chain_err(|| "failed to bind TCP listener")?;
+
+    let hyper_client = hyper::Client::configure()
+        .connector(HttpsConnector::new(1, &handle).chain_err(|| "HTTPS error")?)
+        .build(&handle);
+
+    let (petronel_client, petronel_worker) =
+        ClientBuilder::from_hyper_client(&hyper_client, &token)
+            .with_history_size(10)
+            .with_metrics(petronel::metrics::simple(
+                |ref m| serde_json::to_vec(&m).unwrap(),
+            ))
+            .with_subscriber::<codec::WebsocketSubscriber<tokio_core::net::TcpStream>>()
+            .filter_map_message(protobuf::convert::petronel_message_to_bytes)
+            .build();
+
     let config = Config::new().done();
 
-    let done = listener
+    // Send heartbeat every 30 seconds
+    let heartbeat_petronel_client = petronel_client.clone();
+    let heartbeat = Interval::new(Duration::new(30, 0), &core.handle())
+        .chain_err(|| "failed to create Interval")?
+        .for_each(move |_| Ok(heartbeat_petronel_client.heartbeat()))
+        .then(|r| r.chain_err(|| "heartbeat failed"));
+
+    let http_websocket_server = listener
         .incoming()
         .sleep_on_error(Duration::from_millis(1000), &handle)
-        .map(move |(socket, addr)| {
-            let dispatcher = BufferedDispatcher::new_with_websockets(
-                addr,
-                &handle,
-                process_http,
-                |output, input| {
-                    input
-                        .map(|packet: Packet| {
-                            let parsed = if let Packet::Binary(bytes) = packet {
-                                protobuf::RequestMessage::decode(bytes)
-                            } else {
-                                return Packet::Close(
-                                    1003,
-                                    "Only binary data is supported".to_string(),
-                                );
-                            };
-
-                            let profile_image = {
-                                "https://avatars0.githubusercontent.com/u/11370525?v=4&s=64"
-                            }.into();
-                            let response = protobuf::ResponseMessage {
-                                data: Some(protobuf::response_message::Data::RaidTweetMessage(
-                                    protobuf::RaidTweetResponse {
-                                        boss_name: "Lv60 ユグドラシル・マグナ".into(),
-                                        raid_id: "ABCD1234".into(),
-                                        screen_name: "walfieee".into(),
-                                        tweet_id: 42069,
-                                        profile_image,
-                                        text: "アイカツ！".into(),
-                                        created_at: 1505071158723,
-                                        language: protobuf::Language::English as i32,
-                                    },
-                                )),
-                            };
-
-                            let mut output_buf = Vec::new();
-                            if let Err(_) = response.encode(&mut output_buf) {
-                                return Packet::Close(1011, "Internal server error".to_string());
-                            };
-
-                            Packet::Binary(output_buf)
-                        })
-                        .forward(output)
-                        .map(|_| ())
-                        .map_err(|e| eprintln!("{:?}", e))
-                },
-            );
+        .map(move |(socket, _addr)| {
+            let dispatcher = codec::RequestDispatcher {
+                handle: handle.clone(),
+                petronel_client: petronel_client.clone(),
+            };
 
             Proto::new(socket, &config, dispatcher, &handle)
                 .map_err(|e| eprintln!("Connection error: {}", e))
                 .then(|_| Ok(()))
         })
-        .listen(1000);
+        .listen(1000)
+        .map_err(|()| Error::from_kind(ErrorKind::Msg("HTTP/websocket server failed".into())));
 
-    println!("Listening on {}", addr);
+    println!("Listening on {}", bind_address);
 
-    core.run(done).unwrap();
+    core.run(http_websocket_server.join3(petronel_worker, heartbeat))
+        .chain_err(|| "stream failed")?;
+
+    Ok(())
+});
+
+fn env(name: &str) -> Result<String> {
+    ::std::env::var(name).chain_err(|| {
+        format!("invalid value for {} environment variable", name)
+    })
 }

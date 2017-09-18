@@ -3,6 +3,7 @@ extern crate prost_build;
 fn main() {
     let paths = &[
         "protobuf/domain.proto",
+        "protobuf/persistence.proto",
         "protobuf/requests.proto",
         "protobuf/responses.proto",
     ];

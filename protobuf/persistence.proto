@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package walfie.gbf.raidfinder.protocol;
+
+import "google/protobuf/wrappers.proto";
+import "domain.proto";
+
+// Legacy stuff
+message LegacyRaidBossesCacheItem {
+  repeated RaidBoss raidBosses = 1;
+};
+
+message LegacyTranslationDataCacheItem {
+  repeated TranslationData data = 1;
+};
+

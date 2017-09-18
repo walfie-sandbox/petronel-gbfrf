@@ -14,23 +14,3 @@ message LegacyTranslationDataCacheItem {
   repeated TranslationData data = 1;
 };
 
-// Non-legacy stuff
-// TODO: Actually I probably don't need this
-message PetronelRaidBossMetadataCacheItem {
-  repeated RaidBoss raidBosses = 1;
-};
-
-message PetronelRaidBossMetadata {
-  PetronelRaidBoss boss = 1;
-  int64 lastSeen = 2;
-  uint64 imageHash = 3;
-}
-
-message PetronelRaidBoss {
-  string name = 1;
-  int32 level = 2;
-  google.protobuf.StringValue image = 3;
-  Language language = 4;
-  repeated string translations = 5;
-}
-

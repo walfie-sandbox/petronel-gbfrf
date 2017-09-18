@@ -63,30 +63,41 @@ quick_main!(|| -> Result<()> {
         .connector(HttpsConnector::new(1, &handle).chain_err(|| "HTTPS error")?)
         .build(&handle);
 
-    // TODO: Make cache optional
     let cpu_pool = futures_cpupool::CpuPool::new_num_cpus();
-    let (cache_client, cache_worker) = persistence::AsyncCache::new(
-        &cpu_pool,
-        env("REDIS_URL")?,
-        "petronel_bosses".to_string(),
-        Some("bosses".to_string()),
-    );
 
-    let redis_timeout = Timeout::new(Duration::new(REDIS_TIMEOUT_SECONDS, 0), &handle).unwrap();
+    let (initial_bosses, cache_client, cache_worker) = if let Ok(redis_url) = env("REDIS_URL") {
+        let (cache_client, cache_worker) = persistence::AsyncCache::new(
+            &cpu_pool,
+            redis_url,
+            "petronel_bosses".to_string(),
+            Some("bosses".to_string()),
+        );
 
-    // Wow, timeouts are incredibly annoying to use...
-    let initial_bosses = match core.run(cache_client.get_bosses().select2(redis_timeout)) {
-        Ok(Either::A((bosses, _))) => bosses,
-        Ok(Either::B((_timeout, _))) => {
-            bail!(
-                "could not connect to Redis (timed out after {} seconds)",
-                REDIS_TIMEOUT_SECONDS
-            )
-        }
-        Err(Either::A((err, _))) => Err(err)?,
-        Err(Either::B((_err, _))) => unreachable!(),
+        let redis_timeout = Timeout::new(Duration::new(REDIS_TIMEOUT_SECONDS, 0), &handle).unwrap();
+
+        // Wow, timeouts are incredibly annoying to use...
+        let initial_bosses = match core.run(cache_client.get_bosses().select2(redis_timeout)) {
+            Ok(Either::A((bosses, _))) => bosses,
+            Ok(Either::B((_timeout, _))) => {
+                bail!(
+                    "could not connect to Redis (timed out after {} seconds)",
+                    REDIS_TIMEOUT_SECONDS
+                )
+            }
+            Err(Either::A((err, _))) => Err(err)?,
+            Err(Either::B((_err, _))) => unreachable!(),
+        };
+
+        (initial_bosses, cache_client, cache_worker)
+    } else {
+        // TODO: Don't depend on just REDIS_URL environment variable
+        eprintln!("REDIS_URL environment variable not set, caching disabled");
+        let (cache_client, cache_worker) = persistence::AsyncCache::no_op(&cpu_pool);
+
+        (Vec::new(), cache_client, cache_worker)
     };
 
+    // TODO: Filter out old bosses
     let (petronel_client, petronel_worker) =
         ClientBuilder::from_hyper_client(&hyper_client, &token)
             .with_history_size(10)

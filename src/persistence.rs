@@ -35,6 +35,14 @@ pub struct AsyncCache {
 }
 
 impl AsyncCache {
+    pub fn no_op(pool: &CpuPool) -> (AsyncCacheClient, CpuFuture<(), Error>) {
+        let (sender, receiver) = mpsc::unbounded();
+
+        let cpu_future = pool.spawn(NoOpCache(receiver));
+
+        (AsyncCacheClient(sender), cpu_future)
+    }
+
     pub fn new(
         pool: &CpuPool,
         url: String,
@@ -89,6 +97,18 @@ impl Future for AsyncCache {
     }
 }
 
+struct NoOpCache(mpsc::UnboundedReceiver<CacheMessage>);
+impl Future for NoOpCache {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> ::std::result::Result<Async<Self::Item>, Self::Error> {
+        loop {
+            let polled = self.0.poll().map_err(|()| "failed to poll cache requests stream");
+            let _ = try_ready!(polled);
+        }
+    }
+}
 
 struct Cache {
     redis_connection: redis::Connection,

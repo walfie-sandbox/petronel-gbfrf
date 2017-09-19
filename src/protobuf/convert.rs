@@ -5,9 +5,10 @@ use protobuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use websocket;
 
+// Transparent 1x1 gif
 #[cfg_attr(rustfmt, rustfmt_skip)]
 const DEFAULT_IMAGE: &'static str =
-    "https://abs.twimg.com/sticky/default_profile_images/default_profile_mini.png";
+    "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
 
 fn now_as_milliseconds() -> i64 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {

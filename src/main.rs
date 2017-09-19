@@ -27,6 +27,7 @@ mod protobuf;
 mod codec;
 mod websocket;
 
+use chrono::Utc;
 use futures::{Future, Stream};
 use futures::future::Either;
 use hyper_tls::HttpsConnector;
@@ -40,6 +41,7 @@ use tokio_core::reactor::{Core, Interval, Timeout};
 const HEARTBEAT_INTERVAL_SECONDS: u64 = 30;
 const REDIS_TIMEOUT_SECONDS: u64 = 5;
 const CACHE_FLUSH_INTERVAL_SECONDS: u64 = 60 * 3;
+const TWEET_HISTORY_SIZE: usize = 15;
 
 quick_main!(|| -> Result<()> {
     let token = Token::new(
@@ -100,7 +102,7 @@ quick_main!(|| -> Result<()> {
     // TODO: Filter out old bosses
     let (petronel_client, petronel_worker) =
         ClientBuilder::from_hyper_client(&hyper_client, &token)
-            .with_history_size(10)
+            .with_history_size(TWEET_HISTORY_SIZE)
             .with_subscriber::<codec::WebsocketSubscriber<tokio_core::net::TcpStream>>()
             .filter_map_message(protobuf::convert::petronel_message_to_bytes)
             .with_bosses(initial_bosses)
@@ -109,12 +111,28 @@ quick_main!(|| -> Result<()> {
             ))
             .build();
 
+    // TODO: Configurable
+    let days_3 = chrono::Duration::days(3);
+    let days_30 = chrono::Duration::days(30);
+
     // Flush cache periodically
     let cache_petronel_client = petronel_client.clone();
     let cache_flush = Interval::new(Duration::new(CACHE_FLUSH_INTERVAL_SECONDS, 0), &handle)
         .unwrap()
         .then(|r| r.chain_err(|| "failed to create Interval"))
-        .and_then(move |_| cache_petronel_client.export_metadata())
+        .and_then(move |_| {
+            cache_petronel_client.remove_bosses(move |meta| {
+                let now = Utc::now();
+                let last_seen_duration = now.signed_duration_since(meta.last_seen);
+
+                if meta.boss.level >= 100 {
+                    last_seen_duration > days_30
+                } else {
+                    last_seen_duration > days_3
+                }
+            });
+            cache_petronel_client.export_metadata()
+        })
         .for_each(move |data| Ok(cache_client.update_bosses(data)))
         .then(|r| r.chain_err(|| "cache flush failed"))
         .join(cache_worker);

@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use futures::{Async, Future, future};
+use futures::{future, Async, Future};
 use petronel;
 use petronel::model::BossName;
 use prost::Message;
@@ -132,11 +132,9 @@ where
                 write_buf: Rc::new(Mutex::new(write_buf)),
             })
             .map_err(|_| ())
-            .and_then(|subscription| {
-                WebsocketReader {
-                    read_buf,
-                    subscription,
-                }
+            .and_then(|subscription| WebsocketReader {
+                read_buf,
+                subscription,
             });
 
         self.handle.spawn(subscription_future);
@@ -150,7 +148,9 @@ pub(crate) struct WebsocketSubscriber<S> {
 
 impl<S> Clone for WebsocketSubscriber<S> {
     fn clone(&self) -> Self {
-        WebsocketSubscriber { write_buf: self.write_buf.clone() }
+        WebsocketSubscriber {
+            write_buf: self.write_buf.clone(),
+        }
     }
 }
 
@@ -187,23 +187,17 @@ impl<S> WebsocketReader<S> {
 
         match data {
             &AllRaidBossesMessage(_) => subscription.get_bosses(),
-            &RaidBossesMessage(ref req) => {
-                for name in req.boss_names.iter() {
-                    subscription.get_tweets(name)
-                }
-            }
-            &FollowMessage(ref req) => {
-                for boss_name in req.boss_names.iter() {
-                    let name = BossName::from(boss_name);
-                    subscription.follow(name.clone());
-                    subscription.get_tweets(name);
-                }
-            }
-            &UnfollowMessage(ref req) => {
-                for name in req.boss_names.iter() {
-                    subscription.unfollow(name)
-                }
-            }
+            &RaidBossesMessage(ref req) => for name in req.boss_names.iter() {
+                subscription.get_tweets(name)
+            },
+            &FollowMessage(ref req) => for boss_name in req.boss_names.iter() {
+                let name = BossName::from(boss_name);
+                subscription.follow(name.clone());
+                subscription.get_tweets(name);
+            },
+            &UnfollowMessage(ref req) => for name in req.boss_names.iter() {
+                subscription.unfollow(name)
+            },
         }
     }
 }
@@ -221,8 +215,8 @@ where
                 let (mut in_buf, subscription) =
                     (&mut self.read_buf.in_buf, &mut self.subscription);
 
-                let parsed_frame = websocket::parse_frame(&mut in_buf, MAX_PACKET_SIZE, true)
-                    .map_err(|_| ())?;
+                let parsed_frame =
+                    websocket::parse_frame(&mut in_buf, MAX_PACKET_SIZE, true).map_err(|_| ())?;
 
                 if let Some((frame, amount_consumed)) = parsed_frame {
                     if let Frame::Binary(bytes) = frame {

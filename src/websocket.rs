@@ -10,9 +10,9 @@ pub(crate) enum Frame<B>
 where
     B: AsRef<[u8]>,
 {
-    Ping(B), // 0x9
-    Pong(B), // 0xA
-    Text(B), // 0x1
+    Ping(B),   // 0x9
+    Pong(B),   // 0xA
+    Text(B),   // 0x1
     Binary(B), // 0x2
     Close(u16, B),
 }
@@ -73,14 +73,12 @@ where
 // https://github.com/swindon-rs/tk-http/blob/3520464/src/websocket/zero_copy.rs#L164-L185
 pub(crate) fn write_close(buf: &mut Buf, code: u16, reason: &[u8]) {
     assert!(reason.len() <= 123);
-    buf.extend(
-        &[
-            0x88,
-            (reason.len() + 2) as u8,
-            (code >> 8) as u8,
-            (code & 0xFF) as u8,
-        ],
-    );
+    buf.extend(&[
+        0x88,
+        (reason.len() + 2) as u8,
+        (code >> 8) as u8,
+        (code & 0xFF) as u8,
+    ]);
     buf.extend(reason);
 }
 

@@ -31,10 +31,10 @@ fn language_to_proto(language: petronel::model::Language) -> i32 {
     use petronel::model::Language::*;
 
     (match language {
-         English => protobuf::Language::English,
-         Japanese => protobuf::Language::Japanese,
-         Other => protobuf::Language::Unspecified,
-     }) as i32
+        English => protobuf::Language::English,
+        Japanese => protobuf::Language::Japanese,
+        Other => protobuf::Language::Unspecified,
+    }) as i32
 }
 
 fn boss_to_proto(boss: &petronel::model::RaidBoss) -> protobuf::RaidBoss {
@@ -54,12 +54,16 @@ fn tweet_to_proto(tweet: &petronel::model::RaidTweet) -> protobuf::RaidTweetResp
         raid_id: tweet.raid_id.to_string(),
         screen_name: tweet.user.to_string(),
         tweet_id: tweet.tweet_id as i64,
-        profile_image: tweet.user_image.clone().map(|i| i.to_string()).unwrap_or(
-            DEFAULT_IMAGE.to_string(),
-        ),
-        text: tweet.text.clone().map(|t| t.to_string()).unwrap_or(
-            "".to_string(),
-        ),
+        profile_image: tweet
+            .user_image
+            .clone()
+            .map(|i| i.to_string())
+            .unwrap_or(DEFAULT_IMAGE.to_string()),
+        text: tweet
+            .text
+            .clone()
+            .map(|t| t.to_string())
+            .unwrap_or("".to_string()),
         created_at: tweet.created_at.timestamp() * 1000,
         language: language_to_proto(tweet.language),
     }
@@ -80,7 +84,9 @@ pub(crate) fn petronel_message_to_bytes(msg: PetronelMessage) -> Option<Bytes> {
 
             for tweet in tweets {
                 let message = RaidTweetMessage(tweet_to_proto(tweet));
-                let response = ResponseMessage { data: Some(message) };
+                let response = ResponseMessage {
+                    data: Some(message),
+                };
                 if let Some(bytes) = websocket::serialize_protobuf(response) {
                     total_len += bytes.len();
                     frames.push(bytes);
@@ -103,7 +109,5 @@ pub(crate) fn petronel_message_to_bytes(msg: PetronelMessage) -> Option<Bytes> {
         BossRemove(_boss_name) => None,
     };
 
-    data.and_then(|d| {
-        websocket::serialize_protobuf(ResponseMessage { data: Some(d) })
-    })
+    data.and_then(|d| websocket::serialize_protobuf(ResponseMessage { data: Some(d) }))
 }

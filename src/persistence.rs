@@ -79,7 +79,9 @@ impl Future for AsyncCache {
     fn poll(&mut self) -> ::std::result::Result<Async<Self::Item>, Self::Error> {
         use self::CacheMessage::*;
         loop {
-            let polled = self.receiver.poll().map_err(|()| "failed to poll cache requests stream");
+            let polled = self.receiver
+                .poll()
+                .map_err(|()| "failed to poll cache requests stream");
             match try_ready!(polled) {
                 Some(Get(sender)) => {
                     let _ = sender.send(self.cache.get_bosses());
@@ -104,7 +106,9 @@ impl Future for NoOpCache {
 
     fn poll(&mut self) -> ::std::result::Result<Async<Self::Item>, Self::Error> {
         loop {
-            let polled = self.0.poll().map_err(|()| "failed to poll cache requests stream");
+            let polled = self.0
+                .poll()
+                .map_err(|()| "failed to poll cache requests stream");
             let _ = try_ready!(polled);
         }
     }
@@ -118,9 +122,8 @@ struct Cache {
 
 impl Cache {
     pub fn save_bosses(&self, bosses: &[RaidBossMetadata]) -> Result<()> {
-        let json = serde_json::to_vec(bosses).chain_err(
-            || "failed to serialize boss data to cache",
-        )?;
+        let json =
+            serde_json::to_vec(bosses).chain_err(|| "failed to serialize boss data to cache")?;
 
         self.redis_connection
             .set(&self.bosses_key, json)
@@ -146,9 +149,9 @@ impl Cache {
     }
 
     fn get_petronel_bosses(&self) -> Result<Vec<RaidBossMetadata>> {
-        let bytes: Option<Vec<u8>> = self.redis_connection.get(&self.bosses_key).chain_err(
-            || "failed to load boss data from cache",
-        )?;
+        let bytes: Option<Vec<u8>> = self.redis_connection
+            .get(&self.bosses_key)
+            .chain_err(|| "failed to load boss data from cache")?;
 
         if bytes.is_none() {
             return Ok(Vec::new());
@@ -164,9 +167,9 @@ impl Cache {
             None => return Ok(Vec::new()),
         };
 
-        let bytes: Option<Vec<u8>> = self.redis_connection.get(cache_key).chain_err(
-            || "failed to load legacy boss data from cache",
-        )?;
+        let bytes: Option<Vec<u8>> = self.redis_connection
+            .get(cache_key)
+            .chain_err(|| "failed to load legacy boss data from cache")?;
 
         if bytes.is_none() {
             return Ok(Vec::new());

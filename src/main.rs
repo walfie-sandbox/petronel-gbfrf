@@ -1,9 +1,9 @@
 #[macro_use]
-extern crate prost_derive;
-#[macro_use]
 extern crate error_chain;
 #[macro_use]
 extern crate futures;
+#[macro_use]
+extern crate prost_derive;
 
 extern crate byteorder;
 extern crate bytes;
@@ -55,9 +55,9 @@ quick_main!(|| -> Result<()> {
     let handle = core.handle();
 
     // TODO: Configurable port
-    let bind_address = "0.0.0.0:8080".parse().chain_err(
-        || "failed to parse address",
-    )?;
+    let bind_address = "0.0.0.0:8080"
+        .parse()
+        .chain_err(|| "failed to parse address")?;
     let listener = tokio_core::net::TcpListener::bind(&bind_address, &handle)
         .chain_err(|| "failed to bind TCP listener")?;
 
@@ -80,12 +80,10 @@ quick_main!(|| -> Result<()> {
         // Wow, timeouts are incredibly annoying to use...
         let initial_bosses = match core.run(cache_client.get_bosses().select2(redis_timeout)) {
             Ok(Either::A((bosses, _))) => bosses,
-            Ok(Either::B((_timeout, _))) => {
-                bail!(
-                    "could not connect to Redis (timed out after {} seconds)",
-                    REDIS_TIMEOUT_SECONDS
-                )
-            }
+            Ok(Either::B((_timeout, _))) => bail!(
+                "could not connect to Redis (timed out after {} seconds)",
+                REDIS_TIMEOUT_SECONDS
+            ),
             Err(Either::A((err, _))) => Err(err)?,
             Err(Either::B((_err, _))) => unreachable!(),
         };
@@ -106,9 +104,9 @@ quick_main!(|| -> Result<()> {
             .with_subscriber::<codec::WebsocketSubscriber<tokio_core::net::TcpStream>>()
             .filter_map_message(protobuf::convert::petronel_message_to_bytes)
             .with_bosses(initial_bosses)
-            .with_metrics(petronel::metrics::simple(
-                |ref m| serde_json::to_vec(&m).unwrap(),
-            ))
+            .with_metrics(petronel::metrics::simple(|ref m| {
+                serde_json::to_vec(&m).unwrap()
+            }))
             .build();
 
     // TODO: Configurable
@@ -163,17 +161,12 @@ quick_main!(|| -> Result<()> {
 
     println!("Listening on {}", bind_address);
 
-    core.run(http_websocket_server.join4(
-        petronel_worker,
-        heartbeat,
-        cache_flush,
-    )).chain_err(|| "stream failed")?;
+    core.run(http_websocket_server.join4(petronel_worker, heartbeat, cache_flush))
+        .chain_err(|| "stream failed")?;
 
     Ok(())
 });
 
 fn env(name: &str) -> Result<String> {
-    ::std::env::var(name).chain_err(|| {
-        format!("invalid value for {} environment variable", name)
-    })
+    ::std::env::var(name).chain_err(|| format!("invalid value for {} environment variable", name))
 }
